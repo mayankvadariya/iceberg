@@ -1026,7 +1026,30 @@ public class RESTSessionCatalog extends BaseViewSessionCatalog
         }
       }
     }
+    else if (parent.config().token() != null) {
+      // use the bearer token without exchanging
+      return Pair.of(
+              parent.config().token(),
+              () ->
+                      AuthSession.fromAccessToken(
+                              client,
+                              tokenRefreshExecutor(name()),
+                              parent.config().token(),
+                              expiresAtMillis(properties),
+                              parent));
 
+    }
+    else if (parent.config().credential() != null) {
+      // fetch a token using the client credentials flow
+      return Pair.of(
+              parent.credential(),
+              () ->
+                      AuthSession.fromCredential(
+                              client,
+                              tokenRefreshExecutor(name()),
+                              parent.credential(),
+                              parent));
+    }
     return null;
   }
 
