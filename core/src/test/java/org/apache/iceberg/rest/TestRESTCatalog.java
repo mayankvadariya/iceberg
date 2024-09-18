@@ -41,6 +41,7 @@ import java.util.function.Consumer;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.BaseTransaction;
 import org.apache.iceberg.CatalogProperties;
+import org.apache.iceberg.CatalogUtil;
 import org.apache.iceberg.DataFile;
 import org.apache.iceberg.DataFiles;
 import org.apache.iceberg.FileScanTask;
@@ -2339,6 +2340,88 @@ public class TestRESTCatalog extends CatalogTests<RESTCatalog> {
             String.format(
                 "Invalid value for %s, must be a positive integer",
                 RESTSessionCatalog.REST_PAGE_SIZE));
+  }
+
+  @Test
+  public void testPaginationForListNamespacesUsingRestSessionCatalog() {
+    RESTCatalogAdapter adapter = Mockito.spy(new RESTCatalogAdapter(backendCatalog));
+    RESTSessionCatalog catalog = new RESTSessionCatalog(
+            (config) -> adapter,
+            (context, config) -> CatalogUtil.loadFileIO(config.get(CatalogProperties.FILE_IO_IMPL), Maps.newHashMap(), null));
+
+    catalog.initialize("prod",
+            ImmutableMap.of(
+                    CatalogProperties.URI,
+                    httpServer.getURI().toString(),
+                    CatalogProperties.FILE_IO_IMPL,
+                    "org.apache.iceberg.inmemory.InMemoryFileIO",
+                    "credential",
+                    "catalog:12345",
+                    RESTSessionCatalog.REST_PAGE_SIZE,
+                    "10"));
+
+    SessionCatalog.SessionContext newSessionContext =
+            new SessionCatalog.SessionContext(
+                    UUID.randomUUID().toString(),
+                    null,
+                    null,
+                    ImmutableMap.of(),
+                    ImmutableMap.of());
+
+    int numberOfItems = 30;
+    String namespaceName = "newdb";
+
+    // create several namespaces for listing and verify
+    for (int i = 0; i < numberOfItems; i++) {
+      String nameSpaceName = namespaceName + i;
+      catalog.createNamespace(newSessionContext, Namespace.of(nameSpaceName));
+    }
+
+    assertThat(catalog.listNamespaces(newSessionContext)).hasSize(numberOfItems);
+
+    Mockito.verify(adapter)
+            .execute(
+                    eq(HTTPMethod.GET),
+                    eq("v1/config"),
+                    any(),
+                    any(),
+                    eq(ConfigResponse.class),
+                    any(),
+                    any());
+
+    Mockito.verify(adapter, times(numberOfItems))
+            .execute(
+                    eq(HTTPMethod.POST),
+                    eq("v1/namespaces"),
+                    any(),
+                    any(),
+                    eq(CreateNamespaceResponse.class),
+                    any(),
+                    any());
+
+    // verify initial request with empty pageToken
+    Mockito.verify(adapter)
+            .handleRequest(
+                    eq(RESTCatalogAdapter.Route.LIST_NAMESPACES),
+                    eq(ImmutableMap.of("pageToken", "", "pageSize", "10")),
+                    any(),
+                    eq(ListNamespacesResponse.class));
+
+    // verify second request with updated pageToken
+    Mockito.verify(adapter)
+            .handleRequest(
+                    eq(RESTCatalogAdapter.Route.LIST_NAMESPACES),
+                    eq(ImmutableMap.of("pageToken", "10", "pageSize", "10")),
+                    any(),
+                    eq(ListNamespacesResponse.class));
+
+    // verify third request with update pageToken
+    Mockito.verify(adapter)
+            .handleRequest(
+                    eq(RESTCatalogAdapter.Route.LIST_NAMESPACES),
+                    eq(ImmutableMap.of("pageToken", "20", "pageSize", "10")),
+                    any(),
+                    eq(ListNamespacesResponse.class));
   }
 
   @Test
